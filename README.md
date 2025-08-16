@@ -37,29 +37,107 @@ Car Listing    Message Queue   Process Events    Email/Push/SMS
 Order Service  Event Storage   Create & Store   User Devices
 ```
 
-### Sequence Flow
-1. **External Event Triggers**
-   - Car Listing Service publishes "Car Listed" event
-   - Order Service publishes "Car Purchased" event
-   - Order Service publishes "Order Confirmed" event
+### Detailed Sequence Diagram Flow
 
-2. **Event Processing**
-   - Notification Service consumes events from RabbitMQ
-   - Parses event type and extracts relevant data
-   - Creates notification objects with generated GUIDs
-   - Stores notifications in storage (currently in-memory)
+#### 1. External Event Triggers
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│ Car Listing     │    │ Order Service   │    │ Order Service   │
+│ Service         │    │                 │    │                 │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         │ Car Listed Event      │ Car Purchased Event   │ Order Confirmed Event
+         │ {userId, carId,       │ {userId, carId,       │ {userId, orderId,
+         │  price, timestamp}    │  orderId, amount,     │  status, timestamp}
+         │                       │  timestamp}           │
+         ▼                       ▼                       ▼
+         ┌─────────────────────────────────────────────────────┐
+         │                    RabbitMQ                         │
+         │              Message Queue & Storage                │
+         └─────────────────────────────────────────────────────┘
+```
 
-3. **Notification Delivery**
-   - Determines notification type (email, push, SMS)
-   - Formats content based on event type
-   - Sends via appropriate provider
-   - Updates delivery status
+#### 2. Event Processing & Notification Creation
+```
+┌─────────────────────────────────────────────────────────────┐
+│                Notification Service                         │
+├─────────────────────────────────────────────────────────────┤
+│ 1. Event Consumer listens to RabbitMQ                     │
+│ 2. Parse event type and extract data                       │
+│ 3. Create notification object with:                        │
+│    - Generated GUID                                        │
+│    - User ID from event                                    │
+│    - Formatted message based on event type                 │
+│    - Current timestamp                                     │
+│    - Default unread status                                 │
+│ 4. Store notification in storage                           │
+└─────────────────────────────────────────────────────────────┘
+```
 
-4. **API Operations**
-   - RESTful endpoints for CRUD operations
-   - Real-time notification retrieval
-   - Mark notifications as read/unread
-   - Delete notifications
+#### 3. Notification Delivery Flow
+```
+┌─────────────────────────────────────────────────────────────┐
+│                Notification Processor                       │
+├─────────────────────────────────────────────────────────────┤
+│ 1. Determine notification type (email/push/SMS)            │
+│ 2. Format content based on event type:                     │
+│    • Car Listed: "Your car {carId} has been listed for ${price}" │
+│    • Car Purchased: "Congratulations! You've purchased car {carId}" │
+│    • Order Confirmed: "Your order {orderId} has been confirmed" │
+│ 3. Send via appropriate provider                           │
+│ 4. Update delivery status and timestamp                    │
+│ 5. Log delivery attempt for monitoring                     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 4. API Operations Flow
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   API Client    │    │ Notification    │    │ In-Memory      │
+│                 │    │ Controller      │    │ Storage        │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         │ GET /Notification     │                       │
+         │──────────────────────▶│                       │
+         │                       │ Retrieve All           │
+         │                       │──────────────────────▶│
+         │                       │                       │ List<Notification>
+         │                       │◀──────────────────────│
+         │ JSON Response         │                       │
+         │◀──────────────────────│                       │
+         │                       │                       │
+         │ POST /Notification    │                       │
+         │──────────────────────▶│                       │
+         │                       │ Validate & Create     │
+         │                       │──────────────────────▶│
+         │                       │                       │ Store New
+         │                       │                       │◀──────────────────────│
+         │ 201 Created +         │                       │
+         │ Location Header       │                       │
+         │◀──────────────────────│                       │
+```
+
+#### 5. Error Handling & Recovery
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Error Scenarios                         │
+├─────────────────────────────────────────────────────────────┤
+│ • Event Processing Errors:                                 │
+│   - Invalid event format → Log error, skip processing      │
+│   - Missing required fields → Log error, skip processing   │
+│   - Storage failures → Retry with exponential backoff      │
+│                                                             │
+│ • Delivery Failures:                                       │
+│   - Email provider down → Queue for retry                  │
+│   - Push notification failed → Log and retry               │
+│   - Rate limiting → Implement backoff strategy             │
+│                                                             │
+│ • API Errors:                                              │
+│   - Validation errors → Return 400 Bad Request             │
+│   - Not found → Return 404 Not Found                      │
+│   - Server errors → Return 500 Internal Server Error       │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ## API Endpoints
 - `GET /Notification` - Get all notifications
